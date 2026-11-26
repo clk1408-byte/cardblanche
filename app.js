@@ -35,7 +35,9 @@ const FILES=['cards.json','card-events.json','payruns.json','balances.json','set
 const KEYF={'cards.json':r=>r.id,'card-events.json':r=>r.id,'payruns.json':r=>r.id,'balances.json':r=>r.runId+'|'+r.cardId};
 const EMPTY={'cards.json':[],'card-events.json':[],'payruns.json':[],'balances.json':[],'settings.json':{}};
 const ST={cfg:LS.get('cb_cfg'),files:{},data:{},dirty:{},head:null,etag:null,sync:{state:'idle',msg:'',at:LS.get('cb_lastsync')}};
-(function load(){const s=LS.get('cb_state');if(s){ST.files=s.files||{};ST.data=s.data||{};ST.dirty=s.dirty||{};ST.head=s.head||null;ST.imgTree=s.imgTree||null;ST.imgIndex=s.imgIndex||{}}
+(function load(){const s=LS.get('cb_state');if(s){ST.files=s.files||{};ST.data=s.data||{};ST.dirty=s.dirty||{};ST.head=s.head||null;ST.imgTree=s.imgTree||null;ST.imgIndex=s.imgIndex||{};
+    /* saved by a version that didn't know about card images: look at the whole repo again */
+    if(!('imgIndex' in s))ST.head=null}
   FILES.forEach(f=>{if(ST.data[f]==null)ST.data[f]=clone(EMPTY[f])})})();
 let persistT=null;
 function persist(){clearTimeout(persistT);persistT=setTimeout(()=>{if(!LS.set('cb_state',{files:ST.files,data:ST.data,dirty:ST.dirty,head:ST.head,imgTree:ST.imgTree,imgIndex:ST.imgIndex}))toast('Couldn’t save on this device — storage full?')},120)}
@@ -83,7 +85,7 @@ async function sync(force){
   syncing=true;setSync('busy');let changed=false;
   try{
     const head=await gh(`${REPO()}/branches/${encodeURIComponent(BR())}`,{etag:force?null:ST.etag});
-    if(head.status!==304){ST.etag=head.etag;const sha=head.json.commit.sha;if(sha!==ST.head){await pull(head.json.commit.commit.tree.sha);ST.head=sha;changed=true}}
+    if(head.status!==304){ST.etag=head.etag;const sha=head.json.commit.sha;if(sha!==ST.head||force){await pull(head.json.commit.commit.tree.sha);ST.head=sha;changed=true}}
     if(await push())changed=true;
     persist();if(changed)render();if(IMG.dirty||Object.keys(ST.imgIndex).some(k=>IMG.have[k]!==ST.imgIndex[k].sha))loadImages();
     const n=Object.keys(ST.dirty).length;setSync(n?'wait':'ok')}
