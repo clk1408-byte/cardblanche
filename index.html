@@ -150,7 +150,9 @@ a.lnk{color:var(--blue)}
 @media (min-width:900px){
   body{font-size:15px}
   main{max-width:1100px;padding:20px 28px 40px}
-  main.narrow{max-width:700px}
+  main.narrow{max-width:760px}
+  .wgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:4px 18px;align-items:start}
+  .wgrid .ccard{margin-bottom:6px}
   nav{left:50%;right:auto;transform:translateX(-50%);width:640px;border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0}
   .prow{grid-template-columns:28px 52px minmax(220px,1.6fr) minmax(170px,1fr) 150px 200px;grid-template-areas:"o f n d b a";padding:8px 8px}
   .payhead>.grow{flex-basis:auto}
