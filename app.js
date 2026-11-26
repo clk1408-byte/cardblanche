@@ -35,10 +35,10 @@ const FILES=['cards.json','card-events.json','payruns.json','balances.json','set
 const KEYF={'cards.json':r=>r.id,'card-events.json':r=>r.id,'payruns.json':r=>r.id,'balances.json':r=>r.runId+'|'+r.cardId};
 const EMPTY={'cards.json':[],'card-events.json':[],'payruns.json':[],'balances.json':[],'settings.json':{}};
 const ST={cfg:LS.get('cb_cfg'),files:{},data:{},dirty:{},head:null,etag:null,sync:{state:'idle',msg:'',at:LS.get('cb_lastsync')}};
-(function load(){const s=LS.get('cb_state');if(s){ST.files=s.files||{};ST.data=s.data||{};ST.dirty=s.dirty||{};ST.head=s.head||null}
+(function load(){const s=LS.get('cb_state');if(s){ST.files=s.files||{};ST.data=s.data||{};ST.dirty=s.dirty||{};ST.head=s.head||null;ST.imgTree=s.imgTree||null;ST.imgIndex=s.imgIndex||{}}
   FILES.forEach(f=>{if(ST.data[f]==null)ST.data[f]=clone(EMPTY[f])})})();
 let persistT=null;
-function persist(){clearTimeout(persistT);persistT=setTimeout(()=>{if(!LS.set('cb_state',{files:ST.files,data:ST.data,dirty:ST.dirty,head:ST.head}))toast('Couldn’t save on this device — storage full?')},120)}
+function persist(){clearTimeout(persistT);persistT=setTimeout(()=>{if(!LS.set('cb_state',{files:ST.files,data:ST.data,dirty:ST.dirty,head:ST.head,imgTree:ST.imgTree,imgIndex:ST.imgIndex}))toast('Couldn’t save on this device — storage full?')},120)}
 const D={get cards(){return ST.data['cards.json']},get events(){return ST.data['card-events.json']},get runs(){return ST.data['payruns.json']},get bals(){return ST.data['balances.json']},get settings(){return ST.data['settings.json']}};
 function change(file,why){const cur=ST.dirty[file];why=why||'update';
   /* one commit can carry several changes: list them all in its message */
@@ -85,7 +85,7 @@ async function sync(force){
     const head=await gh(`${REPO()}/branches/${encodeURIComponent(BR())}`,{etag:force?null:ST.etag});
     if(head.status!==304){ST.etag=head.etag;const sha=head.json.commit.sha;if(sha!==ST.head){await pull(head.json.commit.commit.tree.sha);ST.head=sha;changed=true}}
     if(await push())changed=true;
-    persist();if(changed)render();
+    persist();if(changed)render();if(IMG.dirty||Object.keys(ST.imgIndex).some(k=>IMG.have[k]!==ST.imgIndex[k].sha))loadImages();
     const n=Object.keys(ST.dirty).length;setSync(n?'wait':'ok')}
   catch(e){const s=e.status;setSync(s?'err':'offline',s===401?'Access key rejected or expired':s===404?'Can’t find the data repo — check the key’s access':s===403?('GitHub refused: '+e.message):s===409||s===422?'Conflict — retrying':(e.message||'Sync failed'));if(s===409||s===422)syncAgain=true}
   finally{syncing=false;if(syncAgain){syncAgain=false;queueSync(900)}}}
@@ -95,7 +95,10 @@ async function pull(treeSha){
     if(!sha){if(base){delete ST.files[f]}continue}
     if(base&&base.sha===sha)continue;
     const b=await gh(`${REPO()}/git/blobs/${sha}`);let rd;try{rd=JSON.parse(b64dec(b.json.content))}catch(e){continue}
-    adoptRemote(f,sha,rd)}}
+    adoptRemote(f,sha,rd)}
+  const it=t.json.tree.find(n=>n.type==='tree'&&n.path==='card-images');
+  if(!it){ST.imgTree=null;ST.imgIndex={}}
+  else if(it.sha!==ST.imgTree){const l=await gh(`${REPO()}/git/trees/${it.sha}`);const idx={};for(const n of l.json.tree)if(n.type==='blob'&&/\.(webp|png|jpe?g)$/i.test(n.path))idx[n.path.replace(/\.\w+$/,'')]={sha:n.sha,file:n.path};ST.imgIndex=idx;ST.imgTree=it.sha;IMG.dirty=true}}
 function adoptRemote(f,sha,rd){const base=ST.files[f];
   if(ST.dirty[f]){const m=merge3(f,base?base.data:clone(EMPTY[f]),ST.data[f],rd);ST.data[f]=m;if(same(m,rd))delete ST.dirty[f]}
   else ST.data[f]=clone(rd);
@@ -119,6 +122,39 @@ window.addEventListener('online',()=>queueSync(300));window.addEventListener('of
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')queueSync(300);else if(Object.keys(ST.dirty).length)sync()});
 setInterval(()=>{if(document.visibilityState==='visible')sync()},3*60*1000);
 
+/* ================= card images =================
+   card-images/<catalogId>.webp is shared by every card of that product; card-images/card-<cardId>.webp is for one card only.
+   Images are downloaded once per device and kept in IndexedDB, so they show offline. */
+const IMG={urls:{},have:{},dirty:false,busy:false};
+const IDB={db:null,open(){return this.db||(this.db=new Promise((res,rej)=>{const r=indexedDB.open('cardblanche',1);r.onupgradeneeded=()=>r.result.createObjectStore('img');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}))},
+  async get(k){const db=await this.open();return new Promise(res=>{const q=db.transaction('img').objectStore('img').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>res(null)})},
+  async set(k,v){const db=await this.open();return new Promise(res=>{const tx=db.transaction('img','readwrite');tx.objectStore('img').put(v,k);tx.oncomplete=()=>res(true);tx.onerror=()=>res(false)})}};
+function imgKeyFor(d){if(d.cardId){if(IMG.urls['card-'+d.cardId]||ST.imgIndex['card-'+d.cardId])return 'card-'+d.cardId;return d.catalogId||null}return d.id||null}
+const imgUrl=d=>{const k=imgKeyFor(d);return k?IMG.urls[k]||null:null};
+async function loadImages(){if(IMG.busy)return;IMG.busy=true;let got=0;
+  try{const mine=new Set();D.cards.forEach(c=>{mine.add('card-'+c.id);if(c.catalogId)mine.add(c.catalogId)});
+    const keys=Object.keys(ST.imgIndex).sort((a,b)=>(mine.has(b)-mine.has(a)));
+    for(const k of keys){const e=ST.imgIndex[k];if(IMG.have[k]===e.sha)continue;
+      let rec=null;try{rec=await IDB.get(k)}catch(x){}
+      if(!rec||rec.sha!==e.sha){if(!ST.cfg||navigator.onLine===false)continue;
+        try{const b=await gh(`${REPO()}/git/blobs/${e.sha}`);const bin=atob(b.json.content.replace(/\s/g,''));const u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+          const type=/\.png$/i.test(e.file)?'image/png':/\.jpe?g$/i.test(e.file)?'image/jpeg':'image/webp';rec={sha:e.sha,blob:new Blob([u],{type})};await IDB.set(k,rec)}catch(x){continue}}
+      if(IMG.urls[k])URL.revokeObjectURL(IMG.urls[k]);IMG.urls[k]=URL.createObjectURL(rec.blob);IMG.have[k]=e.sha;got++;
+      if(got%8===0)render()}
+    Object.keys(IMG.urls).forEach(k=>{if(!ST.imgIndex[k]){URL.revokeObjectURL(IMG.urls[k]);delete IMG.urls[k];delete IMG.have[k]}})}
+  finally{IMG.busy=false;IMG.dirty=false;if(got)render()}}
+async function resizeCardImage(file){const url=URL.createObjectURL(file);try{const im=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error('Can’t read that image'));i.src=url});
+  let w=im.naturalWidth,h=im.naturalHeight;const rot=h>w;const W0=rot?h:w,H0=rot?w:h;const sc=Math.min(1,800/W0);const W=Math.round(W0*sc),H=Math.round(H0*sc);
+  const cv=document.createElement('canvas');cv.width=W;cv.height=H;const x=cv.getContext('2d');if(rot){x.translate(W,0);x.rotate(Math.PI/2);x.drawImage(im,0,0,H,W)}else x.drawImage(im,0,0,W,H);
+  const blob=await new Promise(res=>cv.toBlob(res,'image/webp',0.92));if(!blob||blob.type!=='image/webp')return await new Promise(res=>cv.toBlob(res,'image/png'));return blob}finally{URL.revokeObjectURL(url)}}
+async function uploadCardImage(c,file,onlyThis){const key=onlyThis||!c.catalogId?'card-'+c.id:c.catalogId;const blob=await resizeCardImage(file);const ext=blob.type==='image/png'?'png':'webp';
+  const buf=new Uint8Array(await blob.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=0x8000)b+=String.fromCharCode.apply(null,buf.subarray(i,i+0x8000));
+  const path=`card-images/${key}.${ext}`;const old=ST.imgIndex[key];
+  if(old&&old.file!==`${key}.${ext}`){try{await gh(`${REPO()}/contents/card-images/${encodeURIComponent(old.file)}`,{method:'DELETE',body:{message:`${deviceName()}: replace image ${key}`,sha:old.sha,branch:BR()}})}catch(x){}}
+  const body={message:`${deviceName()}: card image ${cardLabel(c)}`,content:btoa(b),branch:BR()};const same=ST.imgIndex[key]&&ST.imgIndex[key].file===`${key}.${ext}`;if(same)body.sha=ST.imgIndex[key].sha;
+  const r=await gh(`${REPO()}/contents/${path.split('/').map(encodeURIComponent).join('/')}`,{method:'PUT',body});
+  const sha=r.json.content.sha;ST.imgIndex[key]={sha,file:`${key}.${ext}`};await IDB.set(key,{sha,blob});if(IMG.urls[key])URL.revokeObjectURL(IMG.urls[key]);IMG.urls[key]=URL.createObjectURL(blob);IMG.have[key]=sha;persist()}
+
 /* ================= cards & rewards ================= */
 const ISS2=Object.assign({},ISSUERS,{amexus:'American Express (US)'});
 const NW_SHORT={visa:'VISA',mc:'mastercard',amex:'AMEX'};
@@ -132,7 +168,7 @@ function cardDef(c){
   if(c.network)d.network=c.network;if(c.annualFee!=null)d.fee=c.annualFee;
   if(c.fxFee!=null){d.fxFee=c.fxFee;if(c.fxFee===0)d.noFx=true}
   d.usd=c.currency==='USD'||!!d.usd;d.catalogName=base?base.name:(c.custom&&c.custom.name)||'';
-  d.name=c.nickname||c.product||d.catalogName||'Card';d.last4=c.last4||'';d.id=c.id;
+  d.name=c.nickname||c.product||d.catalogName||'Card';d.last4=c.last4||'';d.id=c.id;d.cardId=c.id;d.catalogId=c.catalogId;
   if(!d.color&&ISSUER_COLORS)d.color=ISSUER_COLORS[d.issuer]||ISSUER_COLORS.other;
   return d}
 const cardById=id=>D.cards.find(c=>c.id===id);
@@ -154,7 +190,7 @@ function rank(cat,store){
   if(pinId){const i=list.findIndex(x=>x.c.id===pinId&&x.ok);if(i>0){const[p]=list.splice(i,1);list.unshift(p)}if(i>=0)list[0].pinned=true}
   return list}
 const grad=def=>`linear-gradient(135deg,${def.color[0]},${def.color[1]})`;
-function miniCard(def,thumb){return `<div class="mini${thumb?' thumb':''}" style="background:${grad(def)}"><span class="is">${esc((ISS2[def.issuer]||'').replace('American Express','Amex'))}</span><span class="ch"></span><span class="nw">${NW_SHORT[def.network]||''}</span></div>`}
+function miniCard(def,thumb){const u=imgUrl(def);if(u)return `<div class="mini img${thumb?' thumb':''}" style="background-image:url(${u})"></div>`;return `<div class="mini${thumb?' thumb':''}" style="background:${grad(def)}"><span class="is">${esc((ISS2[def.issuer]||'').replace('American Express','Amex'))}</span><span class="ch"></span><span class="nw">${NW_SHORT[def.network]||''}</span></div>`}
 function earnSummary(def,mult){
   const cash=PROGRAMS[def.program]&&PROGRAMS[def.program].cash;
   const lab=(cat,p)=>mult&&!cash?((cat==='other'?def.other:(def.rates[cat]??def.other))+'x'):fmtPct(p);
@@ -188,7 +224,7 @@ function closeSheet(){$('#layer').innerHTML=''}
 function confirmSheet(msg,label,cb){sheet(`<h3>Are you sure?</h3><p class="muted">${esc(msg)}</p><div class="btns"><button class="danger" id="x-yes" style="flex:1">${esc(label)}</button><button data-close style="flex:1">Cancel</button></div>`,el=>{el.querySelector('#x-yes').onclick=()=>{closeSheet();cb()}})}
 const VIEWS=['best','wallet','pay','points','more'];
 let view='best';
-function route(){const h=location.hash.replace('#','');view=VIEWS.includes(h)?h:'best';render()}
+function route(){const h=location.hash.replace('#','');view=VIEWS.includes(h)?h:'best';closeSheet();render()}
 window.addEventListener('hashchange',route);
 function render(){
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===view));
@@ -232,7 +268,8 @@ function showRanking(cat,store){const st=store?STORE_BY[store]:null;const list=r
   sheet(h,el=>{el.querySelector('#pinsel').onchange=e=>{const v=e.target.value;const p=clone(S().pins||{cat:{},store:{}});p.cat=p.cat||{};p.store=p.store||{};const tgt=store?p.store:p.cat;const k=store||cat;if(v)tgt[k]=v;else delete tgt[k];setSetting('pins',p,'pin '+(store?STORE_BY[store].name:CAT[cat].name));closeSheet();render();toast(v?'Pinned':'Pin removed')}})}
 function shopMode(storeId){const pick=storeId||LS.get('cb_shop')||'loblaws';const st=STORE_BY[pick];const ranked=rank(st.cat,st.id);const r=ranked[0];
   let h=`<div class="shopbig"><div class="muted small">Shopping mode</div><select id="shopsel" style="margin:10px 0">${STORES.map(s=>`<option value="${s.id}" ${s.id===pick?'selected':''}>${esc(s.name)}</option>`).join('')}</select>`;
-  if(r&&r.ok)h+=`<div class="ccard" style="background:${grad(r.def)}"><div class="row"><div class="iss grow">${esc(ISS2[r.def.issuer]||'')}</div><div class="face-l4">${r.c.last4?'•••• '+esc(r.c.last4):''}</div></div><div class="chipg"></div><div><div class="nm">${esc(r.def.name)}</div><div style="font-size:30px;font-weight:800">${fmtPct(r.pct)}</div><div class="meta">${multLabel(r.def,st.cat,st.id)} ${(PROGRAMS[r.def.program]||{name:''}).name}${r.pinned?' · 📌 pinned':''}</div></div></div>`;
+  if(r&&r.ok&&imgUrl(r.def))h+=`<div class="ccard img" style="background-image:url(${imgUrl(r.def)})"></div><div style="font-size:30px;font-weight:800;color:var(--accent)">${fmtPct(r.pct)}</div><div class="small muted">${esc(r.def.name)}${r.c.last4?' ·· '+esc(r.c.last4):''} · ${multLabel(r.def,st.cat,st.id)} ${(PROGRAMS[r.def.program]||{name:''}).name}${r.pinned?' · 📌 pinned':''}</div>`;
+  else if(r&&r.ok)h+=`<div class="ccard" style="background:${grad(r.def)}"><div class="row"><div class="iss grow">${esc(ISS2[r.def.issuer]||'')}</div><div class="face-l4">${r.c.last4?'•••• '+esc(r.c.last4):''}</div></div><div class="chipg"></div><div><div class="nm">${esc(r.def.name)}</div><div style="font-size:30px;font-weight:800">${fmtPct(r.pct)}</div><div class="meta">${multLabel(r.def,st.cat,st.id)} ${(PROGRAMS[r.def.program]||{name:''}).name}${r.pinned?' · 📌 pinned':''}</div></div></div>`;
   else h+=`<div class="card" style="color:var(--bad)">No card in your wallet is accepted here.</div>`;
   if(st.note)h+=`<div class="small muted">${esc(st.note)}</div>`;const s2=ranked[1];if(s2&&s2.ok)h+=`<div class="small muted" style="margin-top:8px">Backup: ${esc(s2.def.name)} · ${fmtPct(s2.pct)}</div>`;
   h+=`<button class="primary" data-close style="margin-top:18px;width:100%">Done shopping</button></div>`;
@@ -240,7 +277,9 @@ function shopMode(storeId){const pick=storeId||LS.get('cb_shop')||'loblaws';cons
 
 /* ================= Wallet ================= */
 let walletTab='active';
-function faceHTML(c){const d=cardDef(c);const tags=[c.dormant?'dormant':'',c.currency==='USD'?'USD':'',!c.inPayRun&&c.status!=='closed'?'not in pay runs':''].filter(Boolean);
+function faceHTML(c){const d=cardDef(c);const u=imgUrl(d);const tags0=[c.dormant?'dormant':'',c.currency==='USD'?'USD':'',!c.inPayRun&&c.status!=='closed'?'not in pay runs':''].filter(Boolean);
+  if(u)return `<div class="cface" data-act="opencard" data-id="${esc(c.id)}"><div class="ccard img" style="background-image:url(${u});${c.status==='closed'?'filter:grayscale(.75) brightness(.8)':''}">${c.last4?`<span class="l4tag">•••• ${esc(c.last4)}</span>`:''}</div><div class="capt"><div class="row"><div class="grow ellipsis" style="font-weight:600">${esc(d.name)}</div><div class="small muted">${esc((PROGRAMS[d.program]||{name:''}).name)}</div></div><div class="small muted">${earnSummary(d)}</div><div class="small muted">${c.status==='closed'?'Closed'+(c.closedDate?' '+fmtDateY(c.closedDate):''):feeText(d)}${tags0.length?' · '+tags0.join(' · '):''}</div></div></div>`;
+  const tags=[c.dormant?'dormant':'',c.currency==='USD'?'USD':'',!c.inPayRun&&c.status!=='closed'?'not in pay runs':''].filter(Boolean);
   return `<div class="ccard" style="background:${grad(d)};${c.status==='closed'?'filter:grayscale(.75) brightness(.8)':''}" data-act="opencard" data-id="${esc(c.id)}"><div class="row"><div class="iss grow">${esc(ISS2[d.issuer]||'')}</div><div class="meta">${esc((PROGRAMS[d.program]||{name:''}).name)}</div></div><div class="row"><div class="chipg"></div><div class="grow"></div><div class="face-l4">${c.last4?'•••• '+esc(c.last4):''}</div></div><div><div class="nm">${esc(d.name)}</div><div class="meta">${earnSummary(d)}</div><div class="row"><div class="meta grow">${c.status==='closed'?'Closed'+(c.closedDate?' '+fmtDateY(c.closedDate):''):feeText(d)}${tags.length?' · '+tags.join(' · '):''}</div><div class="nwm">${NW_SHORT[d.network]||''}</div></div></div></div>`}
 function vWallet(){const act=activeCards().sort((a,b)=>(a.payeeOrder||99)-(b.payeeOrder||99)),cl=closedCards();
   let h=`<div class="seg"><button data-act="wtab" data-t="active" class="${walletTab==='active'?'on':''}">Active · ${act.length}</button><button data-act="wtab" data-t="closed" class="${walletTab==='closed'?'on':''}">Closed · ${cl.length}</button></div>`;
@@ -250,7 +289,7 @@ function vWallet(){const act=activeCards().sort((a,b)=>(a.payeeOrder||99)-(b.pay
 function cardDetail(id){const c=cardById(id);if(!c)return;const d=cardDef(c);const ev=eventsFor(id);const b=openBonus(id);
   const due=nextDue(c),fee=nextFee(c);
   let h=`<div style="max-width:360px;margin:0 auto">${faceHTML(c).replace('data-act="opencard"','')}</div>`;
-  h+=`<div class="actions"><button data-a="edit">✏️ Edit details</button><button data-a="switch">🔁 Product switch</button>${c.status==='closed'?'<button data-a="reopen">↩️ Reopen</button>':'<button data-a="close">⛔ Close card</button>'}<button data-a="event">＋ Log event</button></div>`;
+  h+=`<div class="actions"><button data-a="edit">✏️ Edit details</button><button data-a="switch">🔁 Product switch</button>${c.status==='closed'?'<button data-a="reopen">↩️ Reopen</button>':'<button data-a="close">⛔ Close card</button>'}<button data-a="event">＋ Log event</button><button data-a="image">🖼️ Card image</button></div>`;
   h+=`<div class="card"><div class="kvs"><span>Last 4</span><span>${esc(c.last4||'—')}</span><span>Opened</span><span>${c.openedDate?fmtDateY(c.openedDate):'—'}</span>${c.status==='closed'?`<span>Closed</span><span>${c.closedDate?fmtDateY(c.closedDate):'date unknown'}</span>`:''}<span>Annual fee</span><span>${c.annualFee?moneyR(c.annualFee,c.currency)+(c.feeRenewalMonth?' · posts in '+MONTHS[c.feeRenewalMonth-1]:' · month not set'):'None'}</span><span>Payment due</span><span>${due?'Day '+c.dueDay+' · next '+fmtDate(due):'Due day not set'}${c.statementDay?' · statement day '+c.statementDay:''}</span><span>Autopay minimum</span><span>${c.autopayMinimum?'Yes':'No'}</span><span>Pay runs</span><span>${c.inPayRun?'Included (#'+(c.payeeOrder||'—')+')':'Not included'}${c.dormant?' · dormant':''}</span><span>Earns</span><span>${esc(earnSummary(d,true))}</span></div>${c.notes?`<div class="small muted" style="margin-top:8px">${esc(c.notes)}</div>`:''}</div>`;
   if(b){const sp=bonusSpent(id,b);const pct=b.target?Math.min(100,sp.amt/b.target*100):0;const n=b.deadline?daysUntil(b.deadline):null;
     h+=`<h2>Welcome bonus spend</h2><div class="card"><div class="row"><div class="grow">${esc(b.note||'Bonus spend')}</div><div class="pct">${b.target?Math.round(pct)+'%':''}</div></div>${b.target?`<div class="bar"><i style="width:${pct}%"></i></div><div class="small muted">${moneyR(sp.amt)} of ${moneyR(b.target)} ${sp.manual?'(entered)':'(estimated from pay-run balances since '+(b.date?fmtDate(b.date):'start')+')'}${n!=null?' · deadline '+fmtDate(b.deadline)+' ('+dayWord(n)+')':''}</div>`:'<div class="small muted">No target recorded.</div>'}<div class="btns" style="margin-top:8px"><button class="sm" data-a="bspent">Set spent so far</button><button class="sm" data-a="bmet">🏁 Mark met</button></div></div>`}
@@ -264,6 +303,7 @@ function cardDetail(id){const c=cardById(id);if(!c)return;const d=cardDef(c);con
       bspent:()=>numberSheet('Spent so far on the bonus','Amount ($)',b&&b.spentManual,v=>{b.spentManual=v;upsert('card-events.json',b,`${d.name}: bonus spend so far ${moneyR(v)}`);cardDetail(id)}),
       bmet:()=>{addEvent({cardId:id,type:'bonus_spend_met',note:''});toast('Bonus spend marked met');cardDetail(id)},
       credit:()=>creditSheet((S().credits||[]).find(z=>z.id===x),false),night:()=>nightSheet((S().nights||[]).find(z=>z.id===x),false),
+      image:()=>imageSheet(c),
       addcredit:()=>creditSheet({id:uid('cr'),cardId:id,repeat:'annual',used:0},true),addnight:()=>nightSheet({id:uid('fn'),cardId:id,used:false},true),
       editev:()=>eventSheet(clone(D.events.find(z=>z.id===x)),false)}[a.dataset.a]||(()=>{}))()})},true)}
 function balanceHistory(cardId){const runs=new Map(D.runs.filter(r=>r.status!=='discarded').map(r=>[r.id,r]));
@@ -352,6 +392,14 @@ function numberSheet(title,label,val,cb){sheet(`<h3>${esc(title)}</h3><label>${e
 function rollCredits(){const t=today();let changed=false;const arr=clone(S().credits||[]);
   arr.forEach(c=>{if(!c.repeat||c.repeat==='none')return;let e=parseD(c.expires),g=0,rolled=false;while(e&&e<t&&g++<60){const n=new Date(e);if(c.repeat==='monthly')n.setMonth(n.getMonth()+1);else if(c.repeat==='quarterly')n.setMonth(n.getMonth()+3);else if(c.repeat==='semiannual')n.setMonth(n.getMonth()+6);else n.setFullYear(n.getFullYear()+1);e=n;c.used=0;rolled=true}if(rolled){c.expires=isoD(e);changed=true}});
   if(changed)setSetting('credits',arr,'reset recurring credits')}
+
+function imageSheet(c){const d=cardDef(c);const u=imgUrl(d);
+  sheet(`<h3>Card image · ${esc(cardLabel(c))}</h3>${u?`<div class="ccard img" style="background-image:url(${u});max-width:340px;margin:8px auto"></div>`:'<p class="small muted">No image yet — the app draws this card.</p>'}
+  <p class="small muted">Use the front of the card, cropped to its edges (PNG, JPG or WebP). Never a photo showing your full card number. It’s saved to your private data repo${c.catalogId?' and shared with every card of this product':''}.</p>
+  <input type="file" id="x-f" accept="image/*">${c.catalogId?'<label style="display:flex;align-items:center;gap:8px;margin-top:10px"><input type="checkbox" id="x-only" style="width:auto"> Only for this card (••'+esc(c.last4||'')+')</label>':''}
+  <div class="btns" style="margin-top:14px"><button class="primary" id="x-ok" style="flex:1">Upload</button><button data-close>Cancel</button></div><div class="small" id="x-msg" style="margin-top:8px"></div>`,el=>{
+    el.querySelector('#x-ok').onclick=async()=>{const f=el.querySelector('#x-f').files[0];const m=el.querySelector('#x-msg');if(!f){m.textContent='Choose an image first.';return}
+      m.textContent='Uploading…';try{await uploadCardImage(c,f,!!(el.querySelector('#x-only')&&el.querySelector('#x-only').checked));closeSheet();render();toast('Card image saved');cardDetail(c.id)}catch(e){m.innerHTML=`<span style="color:var(--bad)">${esc(e.status===401?'Access key rejected':e.message||'Upload failed')}</span>`}}})}
 
 /* ================= Pay ================= */
 let payMode='run',reorder=false;
