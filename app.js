@@ -119,7 +119,7 @@ async function push(){let did=false;
         else delete ST.files[f];
         if(!ST.dirty[f])break}}}
   return did}
-const APP_VERSION='1.2.0';
+const APP_VERSION='1.3.0';
 const deviceName=()=>(ST.cfg&&ST.cfg.device)||'CardBlanche';
 window.addEventListener('online',()=>queueSync(300));window.addEventListener('offline',()=>setSync('offline'));
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')queueSync(300);else if(Object.keys(ST.dirty).length)sync()});
@@ -281,13 +281,20 @@ function shopMode(storeId){const pick=storeId||LS.get('cb_shop')||'loblaws';cons
 
 /* ================= Wallet ================= */
 let walletTab='active';
+function bonusMini(cardId){const b=activeBonuses().find(x=>x.cardId===cardId);if(!b)return'';const m=nextMilestone(b);if(!m)return'';const st=msState(b,m);const tiers=(b.milestones||[]).length;const k=(b.milestones||[]).indexOf(m)+1;
+  let line='',bar='';const col=st.s==='behind'||st.s==='late'||(st.n!=null&&st.n<=14&&st.left>0)?'var(--bad)':st.s==='reached'?'var(--accent)':'var(--warn)';
+  if(st.s==='reached')line=`🏁 ${esc(msLabel(m))} — reached, confirm when it posts`;
+  else if(m.type==='spend'){line=`🎯 ${moneyR(st.sp)} of ${moneyR(m.spend)}${m.byDate?` · ${st.n>1?st.n+' days left':st.n===1?'1 day left':st.n===0?'last day':'past deadline'}`:''}`;bar=`<div class="bar" style="margin:4px 0 0"><i style="width:${Math.min(100,st.sp/(m.spend||1)*100)}%;background:${col}"></i></div>`}
+  else if(m.type==='monthly')line=`🎯 ${st.cur?`month ${st.cur.i+1}/${m.months}: ${moneyR(st.cur.amt)} of ${moneyR(m.perMonth)}`:esc(msLabel(m))}`;
+  else line=`🎯 ${esc(st.txt)}`;
+  return `<div class="bmini" data-act="bonus" data-id="${b.id}"><div class="small" style="color:${col}">${line}</div>${bar}${m.reward||tiers>1?`<div class="tiny muted" style="margin-top:3px">${m.reward?'Earns '+msReward(m):''}${tiers>1?`${m.reward?' · ':''}tier ${k} of ${tiers}`:''}</div>`:''}</div>`}
 function faceHTML(c){const d=cardDef(c);const u=imgUrl(d);const tags0=[c.dormant?'dormant':'',c.currency==='USD'?'USD':'',!c.inPayRun&&c.status!=='closed'?'not in pay runs':''].filter(Boolean);
-  if(u)return `<div class="cface" data-act="opencard" data-id="${esc(c.id)}"><div class="ccard img" style="background-image:url(${u});${c.status==='closed'?'filter:grayscale(.75) brightness(.8)':''}">${c.last4?`<span class="l4tag">•••• ${esc(c.last4)}</span>`:''}</div><div class="capt"><div class="row"><div class="grow ellipsis" style="font-weight:600">${esc(d.name)}</div><div class="small muted">${esc((PROGRAMS[d.program]||{name:''}).name)}</div></div><div class="small muted">${earnSummary(d)}</div><div class="small muted">${c.status==='closed'?'Closed'+(c.closedDate?' '+fmtDateY(c.closedDate):''):feeText(d)}${tags0.length?' · '+tags0.join(' · '):''}</div></div></div>`;
+  if(u)return `<div class="cface" data-act="opencard" data-id="${esc(c.id)}"><div class="ccard img" style="background-image:url(${u});${c.status==='closed'?'filter:grayscale(.75) brightness(.8)':''}">${c.last4?`<span class="l4tag">•••• ${esc(c.last4)}</span>`:''}</div><div class="capt"><div class="row"><div class="grow ellipsis" style="font-weight:600">${esc(d.name)}</div><div class="small muted">${esc((PROGRAMS[d.program]||{name:''}).name)}</div></div><div class="small muted">${earnSummary(d)}</div><div class="small muted">${c.status==='closed'?'Closed'+(c.closedDate?' '+fmtDateY(c.closedDate):''):feeText(d)}${tags0.length?' · '+tags0.join(' · '):''}</div>${bonusMini(c.id)}</div></div>`;
   const tags=[c.dormant?'dormant':'',c.currency==='USD'?'USD':'',!c.inPayRun&&c.status!=='closed'?'not in pay runs':''].filter(Boolean);
-  return `<div class="ccard" style="background:${grad(d)};${c.status==='closed'?'filter:grayscale(.75) brightness(.8)':''}" data-act="opencard" data-id="${esc(c.id)}"><div class="row"><div class="iss grow">${esc(ISS2[d.issuer]||'')}</div><div class="meta">${esc((PROGRAMS[d.program]||{name:''}).name)}</div></div><div class="row"><div class="chipg"></div><div class="grow"></div><div class="face-l4">${c.last4?'•••• '+esc(c.last4):''}</div></div><div><div class="nm">${esc(d.name)}</div><div class="meta">${earnSummary(d)}</div><div class="row"><div class="meta grow">${c.status==='closed'?'Closed'+(c.closedDate?' '+fmtDateY(c.closedDate):''):feeText(d)}${tags.length?' · '+tags.join(' · '):''}</div><div class="nwm">${NW_SHORT[d.network]||''}</div></div></div></div>`}
+  return `<div class="ccard" style="background:${grad(d)};${c.status==='closed'?'filter:grayscale(.75) brightness(.8)':''}" data-act="opencard" data-id="${esc(c.id)}"><div class="row"><div class="iss grow">${esc(ISS2[d.issuer]||'')}</div><div class="meta">${esc((PROGRAMS[d.program]||{name:''}).name)}</div></div><div class="row"><div class="chipg"></div><div class="grow"></div><div class="face-l4">${c.last4?'•••• '+esc(c.last4):''}</div></div><div><div class="nm">${esc(d.name)}</div><div class="meta">${earnSummary(d)}</div><div class="row"><div class="meta grow">${c.status==='closed'?'Closed'+(c.closedDate?' '+fmtDateY(c.closedDate):''):feeText(d)}${tags.length?' · '+tags.join(' · '):''}</div><div class="nwm">${NW_SHORT[d.network]||''}</div></div></div></div>`+(c.status!=='closed'?`<div class="capt" style="margin:-6px 0 12px">${bonusMini(c.id)}</div>`:'')}
 function vWallet(){const act=activeCards().sort((a,b)=>(a.payeeOrder||99)-(b.payeeOrder||99)),cl=closedCards();
   let h=`<div class="seg"><button data-act="wtab" data-t="active" class="${walletTab==='active'?'on':''}">Active · ${act.length}</button><button data-act="wtab" data-t="closed" class="${walletTab==='closed'?'on':''}">Closed · ${cl.length}</button></div>`;
-  if(walletTab==='active'){const ab=activeBonuses();h+=`<div class="row" style="margin:0 4px 8px"><h2 class="grow" style="margin:0">Welcome bonuses${ab.length?' · '+ab.length+' in progress':''}</h2><button class="sm" data-act="newbonus">+ Bonus</button></div>${ab.length?`<div class="wgrid">${ab.map(bonusCardHTML).join('')}</div>`:'<div class="small muted" style="margin:0 6px 12px">No bonus spend in progress.</div>'}<h2>Cards</h2><button class="primary" style="width:100%;margin-bottom:12px" data-act="addcard">+ Add card</button><div class="wgrid">`+act.map(faceHTML).join('')+`</div>`}
+  if(walletTab==='active'){h+=`<button class="primary" style="width:100%;margin-bottom:12px" data-act="addcard">+ Add card</button><div class="wgrid">`+act.map(faceHTML).join('')+`</div>`}
   else h+=cl.length?`<div class="wgrid">${cl.map(faceHTML).join('')}</div>`:`<div class="empty">No closed cards.</div>`;
   return h}
 function cardDetail(id){const c=cardById(id);if(!c)return;const d=cardDef(c);const ev=eventsFor(id);const b=openBonus(id);
@@ -301,7 +308,7 @@ function cardDetail(id){const c=cardById(id);if(!c)return;const d=cardDef(c);con
   const hist=balanceHistory(id);
   if(hist.length){const mx=Math.max(...hist.map(x=>x.balance),1);h+=`<h2>Balance history</h2><div class="card"><div class="bars">${hist.slice(-18).map(x=>`<i title="${fmtDate(x.date)}: ${money(x.balance,c.currency)}" style="height:${Math.max(2,x.balance/mx*100)}%"></i>`).join('')}</div><div class="list">${hist.slice().reverse().slice(0,8).map(x=>`<div class="item" style="padding:6px 2px"><div class="grow small">${fmtDateY(x.date)}${x.flag?' · 🚩 '+esc(x.flagNote):''}</div><div class="small" style="font-variant-numeric:tabular-nums">${money(x.balance,c.currency)}</div><div class="tiny" style="width:50px;text-align:right;color:${x.paid?'var(--accent)':'var(--muted)'}">${x.paid?'paid':''}</div></div>`).join('')}</div></div>`}
   h+=`<h2>History</h2><div class="card tl">${ev.length?ev.map(e=>`<div class="ev k-${e.type}" data-a="editev" data-x="${e.id}" style="cursor:pointer"><div><b>${EV_ICON[e.type]||'•'} ${EV_LABEL[e.type]||e.type}</b> <span class="muted small">${e.date?fmtDateY(e.date):'date unknown'}</span></div>${e.type==='product_switch'?`<div class="small">${esc(e.fromProduct||'?')} → ${esc(e.toProduct||'?')}</div>`:''}${e.target?`<div class="small muted">Target ${moneyR(e.target)}${e.deadline?' by '+fmtDate(e.deadline):''}</div>`:''}${e.amount?`<div class="small muted">${money(e.amount,c.currency)}</div>`:''}${e.note?`<div class="small muted">${esc(e.note)}</div>`:''}</div>`).join(''):'<div class="small muted">No history yet.</div>'}</div>`;
-  sheet(h,el=>{el.addEventListener('click',e=>{const a=e.target.closest('[data-a]');if(!a)return;const x=a.dataset.x;
+  sheet(h,el=>{el.addEventListener('click',e=>{const bz=e.target.closest('[data-act="bonus"]');if(bz){bonusSheet(bz.dataset.id);return}const a=e.target.closest('[data-a]');if(!a)return;const x=a.dataset.x;
     ({edit:()=>editCard(c,false),switch:()=>productSwitch(c),close:()=>closeCard(c),reopen:()=>reopenCard(c),event:()=>eventSheet({cardId:id},true),
       addbonus:()=>newBonus(id),
       bspent:()=>numberSheet('Spent so far on the bonus','Amount ($)',b&&b.spentManual,v=>{b.spentManual=v;upsert('card-events.json',b,`${d.name}: bonus spend so far ${moneyR(v)}`);cardDetail(id)}),
@@ -337,6 +344,7 @@ function editCard(c,isNew){const d=cardDef(c);const base=c.catalogId?CATALOG_BY[
   <label style="display:flex;align-items:center;gap:8px;margin-top:12px"><input type="checkbox" id="f-pay" style="width:auto" ${c.inPayRun?'checked':''}> Include in pay runs</label>
   <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="f-auto" style="width:auto" ${c.autopayMinimum?'checked':''}> Automatic minimum payment set up</label>
   <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="f-dorm" style="width:auto" ${c.dormant?'checked':''}> Dormant (rarely used)</label>
+  ${isNew?'<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="f-bonus" style="width:auto" checked> Set up the welcome bonus next (tiers, minimum spend, deadlines)</label>':''}
   <label>Notes</label><textarea id="f-notes" style="min-height:60px;font-family:inherit;font-size:14px">${esc(c.notes||'')}</textarea>
   <details style="margin-top:12px"><summary class="small muted" style="cursor:pointer">Earn rates${base?' (blank = catalog rate)':''}</summary>
   <label>Rewards program</label><select id="f-prog">${progOpts}</select>
@@ -354,9 +362,10 @@ function editCard(c,isNew){const d=cardDef(c);const base=c.catalogId?CATALOG_BY[
     const prog=v('#f-prog');
     if(base){const o={};const rd={};CATS.forEach(k=>{if(k.id==='other')return;const be=base.rates[k.id]!=null?base.rates[k.id]:base.other;const ne=rates[k.id]!=null?rates[k.id]:other;if(ne!==be)rd[k.id]=ne});if(Object.keys(rd).length)o.rates=rd;if(other!==base.other)o.other=other;if(prog!==base.program)o.program=prog;c.overrides=Object.keys(o).length?o:null}
     else c.custom=Object.assign({},c.custom||{},{name:c.product,program:prog,network:c.network,rates,other,usd:c.currency==='USD'});
+    const wantBonus=isNew&&el.querySelector('#f-bonus')&&el.querySelector('#f-bonus').checked;
     if(isNew){c.id=(c.issuer||'card')+'-'+(l4||uid('').slice(-5));if(cardById(c.id))c.id+= '-'+Date.now().toString(36).slice(-3);saveCard(c,`add ${cardLabel(c)}`);addEvent({cardId:c.id,type:'opened',date:c.openedDate,note:''})}
     else saveCard(c,`edit ${cardLabel(c)}`);
-    closeSheet();render();toast(isNew?'Card added':'Saved');if(!isNew)cardDetail(c.id)}},true)}
+    closeSheet();render();toast(isNew?'Card added':'Saved');if(wantBonus){newBonus(c.id,true);return}if(!isNew)cardDetail(c.id)}},true)}
 function productSwitch(c){catalogPicker('Switch to which card?',pick=>{const nb=CATALOG_BY[pick];const from=cardDef(c).name;
   sheet(`<h3>Product switch</h3><p class="small muted">${esc(from)}${c.last4?' ·· '+esc(c.last4):''} → <b>${esc(nb.name)}</b>. Same card, same history and balances; earn rates and fee switch to the new product.</p><div class="grid2"><div><label>Switch date</label><input id="x-d" type="date" value="${todayISO()}"></div><div><label>New last 4 (if it changed)</label><input id="x-l4" inputmode="numeric" maxlength="4" value="${esc(c.last4||'')}"></div></div><label>Note</label><input id="x-n" placeholder="e.g. retention call, fee avoided"><div class="btns" style="margin-top:14px"><button class="primary" id="x-ok" style="flex:1">Log switch</button><button data-close>Cancel</button></div>`,el=>{
     el.querySelector('#x-ok').onclick=()=>{const l4=el.querySelector('#x-l4').value.trim();if(l4&&!/^\d{4}$/.test(l4)){toast('Last 4 must be 4 digits');return}
@@ -444,7 +453,13 @@ function bonusCardHTML(b){const c=cardById(b.cardId);if(!c)return'';const d=card
   else if(m&&m.type==='monthly'){const pct=st.w.length?st.done/st.w.length*100:0;bar=`<div class="bar"><i style="width:${pct}%"></i></div>`}
   return `<div class="card" data-act="bonus" data-id="${b.id}" style="cursor:pointer"><div class="row">${miniCard(d)}<div class="grow"><div class="ellipsis">${esc(d.name)}${c.last4?' <span class="muted small">·· '+esc(c.last4)+'</span>':''}</div><div class="small muted ellipsis">${esc(b.offer||'Welcome bonus')}</div></div>${m&&m.reward?`<div class="small" style="text-align:right">${msReward(m)}</div>`:''}</div>${m?`<div class="small" style="margin-top:8px">${esc(msLabel(m))}</div>${bar}<div class="small" style="color:${st.s==='behind'||st.s==='late'?'var(--bad)':st.s==='reached'?'var(--accent)':'var(--muted)'}">${esc(st.txt)}</div>`:'<div class="small" style="color:var(--accent);margin-top:6px">All milestones done</div>'}</div>`}
 function bonusSection(cardId){const bs=D.bonuses.filter(b=>b.cardId===cardId).sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1)||(b.startDate||'').localeCompare(a.startDate||''));
-  return `<h2>Welcome bonuses</h2>${bs.map(b=>b.status==='active'?bonusCardHTML(b):`<div class="card small" data-act="bonus" data-id="${b.id}" style="cursor:pointer;opacity:.7">${esc(b.offer||'Welcome bonus')} · ${b.status==='complete'?'completed':'cancelled'}${b.startDate?' · started '+fmtDateY(b.startDate):''}</div>`).join('')}<button class="sm" data-a="addbonus" style="margin-bottom:8px">+ Add bonus</button>`}
+  const one=b=>{if(b.status!=='active')return `<div class="card small" data-act="bonus" data-id="${b.id}" style="cursor:pointer;opacity:.7">${esc(b.offer||'Welcome bonus')} · ${b.status==='complete'?'completed':'cancelled'}${b.startDate?' · started '+fmtDateY(b.startDate):''}</div>`;
+    return `<div class="card"><div class="row"><div class="grow"><b>${esc(b.offer||'Welcome bonus')}</b><div class="small muted">Started ${b.startDate?fmtDateY(b.startDate):'—'} · ${money(bonusSpend(b))} counted from pay runs${(b.adjustments||[]).length?' + adjustments':''}</div></div></div>
+      ${(b.milestones||[]).map((m,i)=>{const st=msState(b,m);const col=st.s==='met'||st.s==='reached'?'var(--accent)':st.s==='behind'||st.s==='late'||st.s==='missed'?'var(--bad)':'var(--muted)';
+        const bar=m.type==='spend'&&st.sp!=null?`<div class="bar" style="margin:4px 0"><i style="width:${Math.min(100,st.sp/(m.spend||1)*100)}%"></i></div>`:m.type==='monthly'&&st.w?`<div class="bar" style="margin:4px 0"><i style="width:${st.w.length?st.done/st.w.length*100:0}%"></i></div>`:'';
+        return `<div style="padding:10px 0 4px;border-top:1px solid var(--line);margin-top:10px"><div class="row small"><div class="grow"><b>Tier ${i+1}</b> · ${esc(msLabel(m))}</div><div>${msReward(m)}</div></div>${bar}<div class="small" style="color:${col}">${esc(st.txt)}</div></div>`}).join('')}
+      <div class="btns" style="margin-top:8px"><button class="sm" data-act="bonus" data-id="${b.id}">Pay-run history & adjustments</button></div></div>`};
+  return `<h2>Welcome bonus</h2>${bs.map(one).join('')}<button class="sm" data-a="addbonus" style="margin-bottom:8px">+ ${bs.length?'Another bonus':'Add bonus'}</button>`}
 function bonusSheet(id){const b=D.bonuses.find(x=>x.id===id);if(!b)return;const c=cardById(b.cardId);const d=c?cardDef(c):{name:'Card'};const runs=bonusRuns(b);let cum=0;
   let h=`<h3>🎯 ${esc(d.name)}${c&&c.last4?' ·· '+esc(c.last4):''}</h3><div class="small muted">${esc(b.offer||'Welcome bonus')}${b.startDate?' · started '+fmtDateY(b.startDate):''}${b.source?` · <a class="lnk" href="${esc(b.source)}" target="_blank" rel="noopener">offer</a>`:''}</div>`;
   h+=(b.milestones||[]).map((m,i)=>{const st=msState(b,m);let body='';
@@ -471,6 +486,7 @@ function bonusSheet(id){const b=D.bonuses.find(x=>x.id===id);if(!b)return;const 
     const dn=el.querySelector('#b-done');if(dn)dn.onclick=()=>{b.status='complete';save('bonus complete')};
     const cn=el.querySelector('#b-cancel');if(cn)cn.onclick=()=>confirmSheet('Cancel tracking this bonus? Its history stays in the data file.','Cancel bonus',()=>{b.status='cancelled';upsert('bonuses.json',b,`${d.name}: bonus cancelled`);render()});
     const ra=el.querySelector('#b-react');if(ra)ra.onclick=()=>{b.status='active';save('bonus reactivated')}},true)}
+let BONUS_STEP=false;
 function bonusEditor(b,isNew){const c=cardById(b.cardId);let unit0=c?(PROGRAMS[cardDef(c).program]||{name:'pts'}).name:'pts';
   b.milestones=b.milestones&&b.milestones.length?b.milestones:[{id:uid('ms'),type:'spend',spend:null,byDate:addMonths(b.startDate||todayISO(),3),reward:null,unit:unit0,status:'open'}];
   const msRow=(m,i)=>`<div class="card" data-row="${i}" style="padding:10px"><div class="row"><select data-f="type" style="flex:1">${[['spend','Spend $ by a date'],['monthly','Spend $ every month'],['date','Date / anniversary bonus']].map(([k,v])=>`<option value="${k}" ${m.type===k?'selected':''}>${v}</option>`).join('')}</select><button class="sm danger" data-del="${i}">✕</button></div>
@@ -478,13 +494,13 @@ function bonusEditor(b,isNew){const c=cardById(b.cardId);let unit0=c?(PROGRAMS[c
       m.type==='monthly'?`<div class="grid2"><div><label>Per month ($)</label><input data-f="perMonth" type="text" inputmode="decimal" value="${m.perMonth??''}"></div><div><label>Number of months</label><input data-f="months" type="number" inputmode="numeric" value="${m.months??12}"></div></div>`:
       `<div class="grid2"><div><label>What triggers it</label><input data-f="label" value="${esc(m.label||'')}" placeholder="e.g. 13th month anniversary"></div><div><label>Date</label><input data-f="byDate" type="date" value="${esc(m.byDate||'')}"></div></div>`}
     <div class="grid2"><div><label>Reward</label><input data-f="reward" type="text" inputmode="numeric" value="${m.reward??''}" placeholder="e.g. 30000"></div><div><label>Unit</label><input data-f="unit" value="${esc(m.unit||unit0)}"></div></div></div>`;
-  const draw=()=>`<h3>${isNew?'Add':'Edit'} welcome bonus</h3><label>Card</label><select id="b-card">${D.cards.map(w=>`<option value="${w.id}" ${b.cardId===w.id?'selected':''}>${esc(cardLabel(w))}${w.status==='closed'?' (closed)':''}</option>`).join('')}</select>
+  const draw=()=>`${BONUS_STEP?`<div class="small muted">New card · step 2 of 2</div>`:''}<h3>${isNew?'Add':'Edit'} welcome bonus</h3><label>Card</label><select id="b-card">${D.cards.map(w=>`<option value="${w.id}" ${b.cardId===w.id?'selected':''}>${esc(cardLabel(w))}${w.status==='closed'?' (closed)':''}</option>`).join('')}</select>
     <div class="grid2"><div><label>Start date (approved / opened)</label><input id="b-start" type="date" value="${esc(b.startDate||'')}"></div><div><label>Offer (short)</label><input id="b-offer" value="${esc(b.offer||'')}" placeholder="e.g. Up to 80,000 pts"></div></div>
     <label>Offer link (optional)</label><input id="b-src" value="${esc(b.source||'')}" placeholder="https://…">
     <label style="display:flex;align-items:center;gap:8px;margin-top:10px"><input type="checkbox" id="b-first" style="width:auto" ${b.countFirstRun!==false?'checked':''}> Count the first pay run after the start date in full</label>
     <h2>Milestones</h2><div id="b-ms">${b.milestones.map(msRow).join('')}</div><button class="sm" id="b-add">+ Milestone</button>
     <label>Notes</label><textarea id="b-notes" style="min-height:50px;font-family:inherit;font-size:14px">${esc(b.notes||'')}</textarea>
-    <div class="btns" style="margin-top:14px"><button class="primary" id="b-save" style="flex:1">Save bonus</button><button data-close>Cancel</button></div>`;
+    <div class="btns" style="margin-top:14px"><button class="primary" id="b-save" style="flex:1">Save bonus</button><button data-close>${BONUS_STEP?'Skip — no bonus':'Cancel'}</button></div>`;
   const readBack=el=>{b.cardId=el.querySelector('#b-card').value;b.startDate=el.querySelector('#b-start').value||null;b.offer=el.querySelector('#b-offer').value.trim();b.source=el.querySelector('#b-src').value.trim();b.countFirstRun=el.querySelector('#b-first').checked;b.notes=el.querySelector('#b-notes').value.trim();
     el.querySelectorAll('[data-row]').forEach(r=>{const m=b.milestones[Number(r.dataset.row)];r.querySelectorAll('[data-f]').forEach(f=>{const k=f.dataset.f;let v=f.value.trim();if(['spend','perMonth','reward','months'].includes(k))v=v===''?null:Number(v.replace(/[$,\s]/g,''));else if(v==='')v=null;m[k]=v})})};
   const open=()=>sheet(draw(),el=>{
@@ -496,9 +512,9 @@ function bonusEditor(b,isNew){const c=cardById(b.cardId);let unit0=c?(PROGRAMS[c
     el.querySelector('#b-save').onclick=()=>{readBack(el);if(!b.startDate){toast('Add the start date');return}const bad=b.milestones.find(m=>m.type==='spend'&&!(m.spend>0));if(bad){toast('Each spend milestone needs an amount');return}
       const isFirst=isNew;upsert('bonuses.json',b,`${cardName(b.cardId)}: ${isNew?'add':'edit'} welcome bonus`);
       if(isFirst)addEvent({cardId:b.cardId,type:'bonus_spend_started',date:b.startDate,target:(b.milestones.find(m=>m.type==='spend')||{}).spend||null,deadline:(b.milestones.find(m=>m.type==='spend')||{}).byDate||null,note:b.offer||''});
-      closeSheet();render();bonusSheet(b.id)}},true);
+      const wasStep=BONUS_STEP;BONUS_STEP=false;closeSheet();render();if(wasStep)cardDetail(b.cardId);else bonusSheet(b.id)}},true);
   open()}
-function newBonus(cardId){const c=cardById(cardId)||activeCards()[0];bonusEditor({id:uid('bonus'),cardId:c.id,startDate:c.openedDate||todayISO(),offer:'',source:'',countFirstRun:true,status:'active',milestones:[],adjustments:[],notes:''},true)}
+function newBonus(cardId,step){const c=cardById(cardId)||activeCards()[0];BONUS_STEP=!!step;bonusEditor({id:uid('bonus'),cardId:c.id,startDate:c.openedDate||todayISO(),offer:'',source:'',countFirstRun:true,status:'active',milestones:[],adjustments:[],notes:''},true)}
 
 /* ================= Pay ================= */
 let payMode='run',reorder=false;
