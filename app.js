@@ -31,9 +31,9 @@ function toast(t){const el=document.createElement('div');el.className='toast';el
    data[name]                 — this device's current copy
    dirty[name] = reason text  — changed here, not yet on GitHub
    On a clash, both sides are merged against the base, record by record. */
-const FILES=['cards.json','card-events.json','payruns.json','balances.json','settings.json'];
-const KEYF={'cards.json':r=>r.id,'card-events.json':r=>r.id,'payruns.json':r=>r.id,'balances.json':r=>r.runId+'|'+r.cardId};
-const EMPTY={'cards.json':[],'card-events.json':[],'payruns.json':[],'balances.json':[],'settings.json':{}};
+const FILES=['cards.json','card-events.json','payruns.json','balances.json','settings.json','bonuses.json'];
+const KEYF={'bonuses.json':r=>r.id,'cards.json':r=>r.id,'card-events.json':r=>r.id,'payruns.json':r=>r.id,'balances.json':r=>r.runId+'|'+r.cardId};
+const EMPTY={'bonuses.json':[],'cards.json':[],'card-events.json':[],'payruns.json':[],'balances.json':[],'settings.json':{}};
 const ST={cfg:LS.get('cb_cfg'),files:{},data:{},dirty:{},head:null,etag:null,sync:{state:'idle',msg:'',at:LS.get('cb_lastsync')}};
 (function load(){const s=LS.get('cb_state');if(s){ST.files=s.files||{};ST.data=s.data||{};ST.dirty=s.dirty||{};ST.head=s.head||null;ST.imgTree=s.imgTree||null;ST.imgIndex=s.imgIndex||{};
     /* saved by a version that didn't know about card images: look at the whole repo again */
@@ -41,7 +41,7 @@ const ST={cfg:LS.get('cb_cfg'),files:{},data:{},dirty:{},head:null,etag:null,syn
   FILES.forEach(f=>{if(ST.data[f]==null)ST.data[f]=clone(EMPTY[f])})})();
 let persistT=null;
 function persist(){clearTimeout(persistT);persistT=setTimeout(()=>{if(!LS.set('cb_state',{files:ST.files,data:ST.data,dirty:ST.dirty,head:ST.head,imgTree:ST.imgTree,imgIndex:ST.imgIndex}))toast('Couldn’t save on this device — storage full?')},120)}
-const D={get cards(){return ST.data['cards.json']},get events(){return ST.data['card-events.json']},get runs(){return ST.data['payruns.json']},get bals(){return ST.data['balances.json']},get settings(){return ST.data['settings.json']}};
+const D={get bonuses(){return ST.data['bonuses.json']},get cards(){return ST.data['cards.json']},get events(){return ST.data['card-events.json']},get runs(){return ST.data['payruns.json']},get bals(){return ST.data['balances.json']},get settings(){return ST.data['settings.json']}};
 function change(file,why){const cur=ST.dirty[file];why=why||'update';
   /* one commit can carry several changes: list them all in its message */
   if(!cur)ST.dirty[file]=why;else if(!cur.split('; ').includes(why)){const j=cur+'; '+why;ST.dirty[file]=j.length>200?j.slice(0,197)+'…':j}
@@ -119,7 +119,7 @@ async function push(){let did=false;
         else delete ST.files[f];
         if(!ST.dirty[f])break}}}
   return did}
-const APP_VERSION='1.1.2';
+const APP_VERSION='1.2.0';
 const deviceName=()=>(ST.cfg&&ST.cfg.device)||'CardBlanche';
 window.addEventListener('online',()=>queueSync(300));window.addEventListener('offline',()=>setSync('offline'));
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')queueSync(300);else if(Object.keys(ST.dirty).length)sync()});
@@ -245,7 +245,8 @@ function signals(){const out=[];const t=today();
   activeCards().forEach(c=>{const d=cardDef(c);
     const nf=nextFee(c);if(nf){const n=daysBetween(t,nf);if(n<=45)out.push({lvl:n<=14?'bad':'warn',icon:'💸',t:`${d.name} annual fee ${moneyR(c.annualFee,c.currency)} posts in ${MONTHS[nf.getMonth()]}`,s:'Keep, downgrade or cancel before it posts.',card:c.id})}
     const due=nextDue(c);if(due&&c.inPayRun){const n=daysBetween(t,due);const last=lastRunDate();if(n<=7&&(!last||daysBetween(parseD(last),t)>10))out.push({lvl:n<=2?'bad':'warn',icon:'📅',t:`${d.name} payment due ${dayWord(n)}`,s:last?`Last pay run ${fmtDate(last)}`:'No pay run recorded yet',go:'pay'})}
-    const b=openBonus(c.id);if(b&&b.deadline){const n=daysUntil(b.deadline);const sp=bonusSpent(c.id,b);const left=(b.target||0)-sp.amt;if(n!=null&&n>=0&&n<=45&&left>0)out.push({lvl:n<=14?'bad':'warn',icon:'🎯',t:`${moneyR(left)} to go on ${d.name} bonus`,s:`${dayWord(n)} · ${moneyR(Math.ceil(left/Math.max(1,n)))}/day`,card:c.id})}});
+    });
+  bonusSignals().forEach(x=>out.push(x));
   (S().credits||[]).forEach(c=>{const left=c.amount-(c.used||0);const n=daysUntil(c.expires);if(left>0&&n!=null&&n>=0&&n<=14)out.push({lvl:n<=3?'bad':'warn',icon:'🎟️',t:`${money(left)} left on ${c.name}`,s:`${cardName(c.cardId)} · expires ${dayWord(n)}`,card:c.cardId})});
   (S().nights||[]).filter(f=>!f.used).forEach(f=>{const n=daysUntil(f.expires);if(n!=null&&n>=0&&n<=60)out.push({lvl:n<=14?'bad':'warn',icon:'🏨',t:`${f.name} free night expires ${dayWord(n)}`,s:fmtDate(f.expires)})});
   const flags=openFlags();if(flags.length)out.push({lvl:'warn',icon:'🚩',t:`${flags.length} open pay-run flag${flags.length>1?'s':''}`,s:flags.slice(0,2).map(f=>cardName(f.cardId)+': '+f.flagNote).join(' · '),go:'pay'});
@@ -254,7 +255,7 @@ function signals(){const out=[];const t=today();
 function vBest(){
   if(!activeCards().length)return `<div class="card hero"><div class="big">No cards yet</div><p class="muted">Add your cards in Wallet.</p><a class="btn" href="#wallet">Go to Wallet</a></div>`;
   const sig=signals();let h='';
-  if(sig.length)h+=`<h2>Signals</h2><div class="card list">`+sig.map(s=>`<div class="item" ${s.card?`data-act="opencard" data-id="${esc(s.card)}"`:s.go?`data-act="go" data-v="${s.go}"`:''} style="${s.card||s.go?'cursor:pointer':''}"><div class="icon">${s.icon}</div><div class="grow"><div>${esc(s.t)}</div><div class="small" style="color:${s.lvl==='bad'?'var(--bad)':'var(--muted)'}">${esc(s.s)}</div></div></div>`).join('')+`</div>`;
+  if(sig.length)h+=`<h2>Signals</h2><div class="card list">`+sig.map(s=>`<div class="item" ${s.bonus?`data-act="bonus" data-id="${esc(s.bonus)}"`:s.card?`data-act="opencard" data-id="${esc(s.card)}"`:s.go?`data-act="go" data-v="${s.go}"`:''} style="${s.card||s.go||s.bonus?'cursor:pointer':''}"><div class="icon">${s.icon}</div><div class="grow"><div>${esc(s.t)}</div><div class="small" style="color:${s.lvl==='bad'?'var(--bad)':'var(--muted)'}">${esc(s.s)}</div></div></div>`).join('')+`</div>`;
   h+=`<h2>Best card for…</h2><div class="seg"><button data-act="mode" data-m="cats" class="${bestMode==='cats'?'on':''}">Categories</button><button data-act="mode" data-m="stores" class="${bestMode==='stores'?'on':''}">Stores</button></div>`;
   if(bestMode==='cats')h+=`<div class="card list">`+CATS.map(c=>{const r=rank(c.id)[0];if(!r)return'';const cap=capNote(r.def,c.id);
       return `<div class="item" data-act="cat" data-id="${c.id}" style="cursor:pointer"><div class="icon">${c.icon}</div><div class="grow"><div class="ellipsis">${c.name}</div><div class="small muted ellipsis">${r.pinned?'<span class="pin">📌 </span>':''}${esc(r.def.name)}${r.c.last4?' ·· '+esc(r.c.last4):''}${cap?' · '+cap:''}</div></div><div style="text-align:right"><div class="pct">${fmtPct(r.pct)}</div><div class="tiny muted">${multLabel(r.def,c.id)}</div></div></div>`}).join('')+`</div>`;
@@ -286,7 +287,7 @@ function faceHTML(c){const d=cardDef(c);const u=imgUrl(d);const tags0=[c.dormant
   return `<div class="ccard" style="background:${grad(d)};${c.status==='closed'?'filter:grayscale(.75) brightness(.8)':''}" data-act="opencard" data-id="${esc(c.id)}"><div class="row"><div class="iss grow">${esc(ISS2[d.issuer]||'')}</div><div class="meta">${esc((PROGRAMS[d.program]||{name:''}).name)}</div></div><div class="row"><div class="chipg"></div><div class="grow"></div><div class="face-l4">${c.last4?'•••• '+esc(c.last4):''}</div></div><div><div class="nm">${esc(d.name)}</div><div class="meta">${earnSummary(d)}</div><div class="row"><div class="meta grow">${c.status==='closed'?'Closed'+(c.closedDate?' '+fmtDateY(c.closedDate):''):feeText(d)}${tags.length?' · '+tags.join(' · '):''}</div><div class="nwm">${NW_SHORT[d.network]||''}</div></div></div></div>`}
 function vWallet(){const act=activeCards().sort((a,b)=>(a.payeeOrder||99)-(b.payeeOrder||99)),cl=closedCards();
   let h=`<div class="seg"><button data-act="wtab" data-t="active" class="${walletTab==='active'?'on':''}">Active · ${act.length}</button><button data-act="wtab" data-t="closed" class="${walletTab==='closed'?'on':''}">Closed · ${cl.length}</button></div>`;
-  if(walletTab==='active'){h+=`<button class="primary" style="width:100%;margin-bottom:12px" data-act="addcard">+ Add card</button><div class="wgrid">`+act.map(faceHTML).join('')+`</div>`}
+  if(walletTab==='active'){const ab=activeBonuses();h+=`<div class="row" style="margin:0 4px 8px"><h2 class="grow" style="margin:0">Welcome bonuses${ab.length?' · '+ab.length+' in progress':''}</h2><button class="sm" data-act="newbonus">+ Bonus</button></div>${ab.length?`<div class="wgrid">${ab.map(bonusCardHTML).join('')}</div>`:'<div class="small muted" style="margin:0 6px 12px">No bonus spend in progress.</div>'}<h2>Cards</h2><button class="primary" style="width:100%;margin-bottom:12px" data-act="addcard">+ Add card</button><div class="wgrid">`+act.map(faceHTML).join('')+`</div>`}
   else h+=cl.length?`<div class="wgrid">${cl.map(faceHTML).join('')}</div>`:`<div class="empty">No closed cards.</div>`;
   return h}
 function cardDetail(id){const c=cardById(id);if(!c)return;const d=cardDef(c);const ev=eventsFor(id);const b=openBonus(id);
@@ -294,8 +295,7 @@ function cardDetail(id){const c=cardById(id);if(!c)return;const d=cardDef(c);con
   let h=`<div style="max-width:360px;margin:0 auto">${faceHTML(c).replace('data-act="opencard"','')}</div>`;
   h+=`<div class="actions"><button data-a="edit">✏️ Edit details</button><button data-a="switch">🔁 Product switch</button>${c.status==='closed'?'<button data-a="reopen">↩️ Reopen</button>':'<button data-a="close">⛔ Close card</button>'}<button data-a="event">＋ Log event</button><button data-a="image">🖼️ Card image</button></div>`;
   h+=`<div class="card"><div class="kvs"><span>Last 4</span><span>${esc(c.last4||'—')}</span><span>Opened</span><span>${c.openedDate?fmtDateY(c.openedDate):'—'}</span>${c.status==='closed'?`<span>Closed</span><span>${c.closedDate?fmtDateY(c.closedDate):'date unknown'}</span>`:''}<span>Annual fee</span><span>${c.annualFee?moneyR(c.annualFee,c.currency)+(c.feeRenewalMonth?' · posts in '+MONTHS[c.feeRenewalMonth-1]:' · month not set'):'None'}</span><span>Payment due</span><span>${due?'Day '+c.dueDay+' · next '+fmtDate(due):'Due day not set'}${c.statementDay?' · statement day '+c.statementDay:''}</span><span>Autopay minimum</span><span>${c.autopayMinimum?'Yes':'No'}</span><span>Pay runs</span><span>${c.inPayRun?'Included (#'+(c.payeeOrder||'—')+')':'Not included'}${c.dormant?' · dormant':''}</span><span>Earns</span><span>${esc(earnSummary(d,true))}</span></div>${c.notes?`<div class="small muted" style="margin-top:8px">${esc(c.notes)}</div>`:''}</div>`;
-  if(b){const sp=bonusSpent(id,b);const pct=b.target?Math.min(100,sp.amt/b.target*100):0;const n=b.deadline?daysUntil(b.deadline):null;
-    h+=`<h2>Welcome bonus spend</h2><div class="card"><div class="row"><div class="grow">${esc(b.note||'Bonus spend')}</div><div class="pct">${b.target?Math.round(pct)+'%':''}</div></div>${b.target?`<div class="bar"><i style="width:${pct}%"></i></div><div class="small muted">${moneyR(sp.amt)} of ${moneyR(b.target)} ${sp.manual?'(entered)':'(estimated from pay-run balances since '+(b.date?fmtDate(b.date):'start')+')'}${n!=null?' · deadline '+fmtDate(b.deadline)+' ('+dayWord(n)+')':''}</div>`:'<div class="small muted">No target recorded.</div>'}<div class="btns" style="margin-top:8px"><button class="sm" data-a="bspent">Set spent so far</button><button class="sm" data-a="bmet">🏁 Mark met</button></div></div>`}
+  h+=bonusSection(id);
   const cr=(S().credits||[]).filter(x=>x.cardId===id),ni=(S().nights||[]).filter(x=>x.cardId===id);
   h+=`<h2>Statement credits & free nights</h2><div class="card">${cr.map(x=>{const left=Math.max(0,x.amount-(x.used||0));const n=daysUntil(x.expires);return `<div class="row" style="padding:6px 0" data-a="credit" data-x="${x.id}"><div class="icon">🎟️</div><div class="grow"><div>${esc(x.name)}</div><div class="small muted">${money(left)} left of ${money(x.amount)}${x.expires?' · last day '+fmtDate(x.expires)+(n!=null?' ('+dayWord(n)+')':''):''}${x.repeat&&x.repeat!=='none'?' · resets '+x.repeat:''}</div></div></div>`}).join('')}${ni.map(x=>`<div class="row" style="padding:6px 0;${x.used?'opacity:.5':''}" data-a="night" data-x="${x.id}"><div class="icon">🏨</div><div class="grow"><div>${esc(x.name)}</div><div class="small muted">${x.used?'Used':x.expires?'Expires '+fmtDate(x.expires):''}${x.note?' · '+esc(x.note):''}</div></div></div>`).join('')}${!cr.length&&!ni.length?'<div class="small muted">None tracked.</div>':''}<div class="btns" style="margin-top:8px"><button class="sm" data-a="addcredit">+ Credit</button><button class="sm" data-a="addnight">+ Free night</button></div></div>`;
   const hist=balanceHistory(id);
@@ -303,6 +303,7 @@ function cardDetail(id){const c=cardById(id);if(!c)return;const d=cardDef(c);con
   h+=`<h2>History</h2><div class="card tl">${ev.length?ev.map(e=>`<div class="ev k-${e.type}" data-a="editev" data-x="${e.id}" style="cursor:pointer"><div><b>${EV_ICON[e.type]||'•'} ${EV_LABEL[e.type]||e.type}</b> <span class="muted small">${e.date?fmtDateY(e.date):'date unknown'}</span></div>${e.type==='product_switch'?`<div class="small">${esc(e.fromProduct||'?')} → ${esc(e.toProduct||'?')}</div>`:''}${e.target?`<div class="small muted">Target ${moneyR(e.target)}${e.deadline?' by '+fmtDate(e.deadline):''}</div>`:''}${e.amount?`<div class="small muted">${money(e.amount,c.currency)}</div>`:''}${e.note?`<div class="small muted">${esc(e.note)}</div>`:''}</div>`).join(''):'<div class="small muted">No history yet.</div>'}</div>`;
   sheet(h,el=>{el.addEventListener('click',e=>{const a=e.target.closest('[data-a]');if(!a)return;const x=a.dataset.x;
     ({edit:()=>editCard(c,false),switch:()=>productSwitch(c),close:()=>closeCard(c),reopen:()=>reopenCard(c),event:()=>eventSheet({cardId:id},true),
+      addbonus:()=>newBonus(id),
       bspent:()=>numberSheet('Spent so far on the bonus','Amount ($)',b&&b.spentManual,v=>{b.spentManual=v;upsert('card-events.json',b,`${d.name}: bonus spend so far ${moneyR(v)}`);cardDetail(id)}),
       bmet:()=>{addEvent({cardId:id,type:'bonus_spend_met',note:''});toast('Bonus spend marked met');cardDetail(id)},
       credit:()=>creditSheet((S().credits||[]).find(z=>z.id===x),false),night:()=>nightSheet((S().nights||[]).find(z=>z.id===x),false),
@@ -404,6 +405,101 @@ function imageSheet(c){const d=cardDef(c);const u=imgUrl(d);
     el.querySelector('#x-ok').onclick=async()=>{const f=el.querySelector('#x-f').files[0];const m=el.querySelector('#x-msg');if(!f){m.textContent='Choose an image first.';return}
       m.textContent='Uploading…';try{await uploadCardImage(c,f,!!(el.querySelector('#x-only')&&el.querySelector('#x-only').checked));closeSheet();render();toast('Card image saved');cardDetail(c.id)}catch(e){m.innerHTML=`<span style="color:var(--bad)">${esc(e.status===401?'Access key rejected':e.message||'Upload failed')}</span>`}}})}
 
+/* ================= Welcome bonuses =================
+   bonuses.json: {id, cardId, startDate, offer, source, countFirstRun, status:'active'|'complete'|'cancelled', notes,
+     milestones:[{id, type:'spend'|'monthly'|'date', spend, byDate, months, perMonth, monthsMet:{}, reward, unit, status:'open'|'met'|'missed', metDate, posted, postedDate}],
+     adjustments:[{id, date, amount, note}]}
+   Spend is counted from pay-run balances (each run's balance ≈ spend since the previous payment) plus manual adjustments. */
+const addMonths=(iso,n)=>{const d=parseD(iso);if(!d)return null;const x=new Date(d);x.setMonth(x.getMonth()+n);return isoD(x)};
+const activeBonuses=()=>D.bonuses.filter(b=>b.status==='active');
+function bonusRuns(b){const runs=D.runs.filter(r=>r.status!=='discarded'&&r.date>=(b.startDate||'0000')).sort((a,b2)=>a.date.localeCompare(b2.date));
+  const out=[];runs.forEach((r,i)=>{const x=getBal(r.id,b.cardId);if(!x||x.balance==null)return;out.push({runId:r.id,date:r.date,draft:r.status==='draft',amount:Math.max(0,x.balance)})});
+  if(b.countFirstRun===false&&out.length)out[0].skipped=true;return out}
+function bonusSpend(b,upTo){const lim=upTo||'9999';let t=0;bonusRuns(b).forEach(x=>{if(!x.skipped&&x.date<=lim)t+=x.amount});(b.adjustments||[]).forEach(a=>{if((a.date||'0000')<=lim)t+=Number(a.amount)||0});return r2(t)}
+function monthWindows(b,m){const out=[];for(let i=0;i<(m.months||0);i++){const from=addMonths(b.startDate,i),to=addMonths(b.startDate,i+1);
+  let amt=0;bonusRuns(b).forEach(x=>{if(!x.skipped&&x.date>=from&&x.date<to)amt+=x.amount});(b.adjustments||[]).forEach(a=>{if(a.date>=from&&a.date<to)amt+=Number(a.amount)||0});out.push({i,from,to,amt:r2(amt),met:!!(m.monthsMet||{})[i]})}return out}
+function msState(b,m){const t=todayISO();
+  if(m.status==='met')return{s:'met',txt:'Met'+(m.metDate?' '+fmtDate(m.metDate):'')+(m.posted?' · points posted':'')};
+  if(m.status==='missed')return{s:'missed',txt:'Missed'};
+  if(m.type==='spend'){const sp=bonusSpend(b,m.byDate);const left=r2((m.spend||0)-sp);const n=m.byDate?daysBetween(today(),parseD(m.byDate)):null;
+    if(left<=0)return{s:'reached',sp,left:0,n,txt:'Target reached (estimate) — confirm when the bonus posts'};
+    if(n!=null&&n<0)return{s:'late',sp,left,n,txt:`Deadline passed ${moneyR(left)} short`};
+    const pace=n>0?left/n:left;const start=parseD(b.startDate);let behind=false;if(start&&m.byDate){const tot=daysBetween(start,parseD(m.byDate))||1,el=Math.max(0,daysBetween(start,today()));behind=sp<(m.spend||0)*el/tot*0.9}
+    return{s:behind?'behind':'ok',sp,left,n,pace,txt:`${moneyR(left)} to go${n!=null?' · '+dayWord(n)+' · '+moneyR(Math.ceil(pace))+'/day':''}`}}
+  if(m.type==='monthly'){const w=monthWindows(b,m);const done=w.filter(x=>x.met).length;const cur=w.find(x=>x.from<=t&&t<x.to);
+    return{s:done===w.length?'reached':'ok',w,done,cur,txt:`${done}/${w.length} months met${cur?` · this month ${moneyR(cur.amt)} of ${moneyR(m.perMonth)}`:''}`}}
+  const n=m.byDate?daysBetween(today(),parseD(m.byDate)):null;return{s:n!=null&&n<=0?'reached':'ok',n,txt:m.byDate?(n>0?'Unlocks '+fmtDate(m.byDate)+' ('+dayWord(n)+')':'Date reached — confirm when it posts'):'No date set'}}
+function nextMilestone(b){return(b.milestones||[]).find(m=>m.status!=='met'&&m.status!=='missed')}
+function msLabel(m){return m.type==='spend'?`Spend ${moneyR(m.spend)}${m.byDate?' by '+fmtDateY(m.byDate):''}`:m.type==='monthly'?`${moneyR(m.perMonth)}/month for ${m.months} months`:`${m.label||'Date bonus'}${m.byDate?' on '+fmtDateY(m.byDate):''}`}
+function msReward(m){return m.reward?`${Number(m.reward).toLocaleString('en-CA')} ${esc(m.unit||'pts')}`:''}
+function bonusSignals(){const out=[];activeBonuses().forEach(b=>{const c=cardById(b.cardId);if(!c)return;const m=nextMilestone(b);if(!m)return;const st=msState(b,m);const d=cardDef(c);
+  if(m.type==='spend'&&st.left>0&&st.n!=null&&st.n>=0&&(st.n<=60||st.s==='behind'))out.push({lvl:st.n<=14||st.s==='behind'?'bad':'warn',icon:'🎯',t:`${moneyR(st.left)} to go on ${d.name}${c.last4?' ·· '+c.last4:''} bonus`,s:`by ${fmtDate(m.byDate)} (${dayWord(st.n)}) · ${moneyR(Math.ceil(st.pace))}/day${st.s==='behind'?' · behind pace':''}`,bonus:b.id});
+  else if(st.s==='reached')out.push({lvl:'warn',icon:'🏁',t:`${d.name} bonus milestone reached`,s:'Confirm it once the points post',bonus:b.id});
+  else if(m.type==='monthly'&&st.cur&&st.cur.amt<(m.perMonth||0))out.push({lvl:'warn',icon:'🎯',t:`${d.name}: ${moneyR((m.perMonth||0)-st.cur.amt)} more this month for the bonus`,s:`month ${st.cur.i+1} of ${m.months} ends ${fmtDate(st.cur.to)}`,bonus:b.id})});return out}
+function bonusChip(cardId){const b=activeBonuses().find(x=>x.cardId===cardId);if(!b)return'';const m=nextMilestone(b);if(!m)return'';const st=msState(b,m);
+  if(m.type==='spend'&&st.left>0)return `<span class="chip ${st.s==='behind'||(st.n!=null&&st.n<=14)?'bad':'warn'}" data-act="bonus" data-id="${b.id}" style="cursor:pointer">🎯 ${moneyR(st.left)} to go${m.byDate?' by '+fmtDate(m.byDate):''}</span>`;
+  return `<span class="chip warn" data-act="bonus" data-id="${b.id}" style="cursor:pointer">🎯 bonus</span>`}
+function bonusCardHTML(b){const c=cardById(b.cardId);if(!c)return'';const d=cardDef(c);const m=nextMilestone(b);const st=m?msState(b,m):null;
+  let bar='';if(m&&m.type==='spend'){const pct=Math.min(100,(st.sp||0)/(m.spend||1)*100);bar=`<div class="bar ${st.s==='behind'?'warn':''}"><i style="width:${pct}%"></i></div>`}
+  else if(m&&m.type==='monthly'){const pct=st.w.length?st.done/st.w.length*100:0;bar=`<div class="bar"><i style="width:${pct}%"></i></div>`}
+  return `<div class="card" data-act="bonus" data-id="${b.id}" style="cursor:pointer"><div class="row">${miniCard(d)}<div class="grow"><div class="ellipsis">${esc(d.name)}${c.last4?' <span class="muted small">·· '+esc(c.last4)+'</span>':''}</div><div class="small muted ellipsis">${esc(b.offer||'Welcome bonus')}</div></div>${m&&m.reward?`<div class="small" style="text-align:right">${msReward(m)}</div>`:''}</div>${m?`<div class="small" style="margin-top:8px">${esc(msLabel(m))}</div>${bar}<div class="small" style="color:${st.s==='behind'||st.s==='late'?'var(--bad)':st.s==='reached'?'var(--accent)':'var(--muted)'}">${esc(st.txt)}</div>`:'<div class="small" style="color:var(--accent);margin-top:6px">All milestones done</div>'}</div>`}
+function bonusSection(cardId){const bs=D.bonuses.filter(b=>b.cardId===cardId).sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1)||(b.startDate||'').localeCompare(a.startDate||''));
+  return `<h2>Welcome bonuses</h2>${bs.map(b=>b.status==='active'?bonusCardHTML(b):`<div class="card small" data-act="bonus" data-id="${b.id}" style="cursor:pointer;opacity:.7">${esc(b.offer||'Welcome bonus')} · ${b.status==='complete'?'completed':'cancelled'}${b.startDate?' · started '+fmtDateY(b.startDate):''}</div>`).join('')}<button class="sm" data-a="addbonus" style="margin-bottom:8px">+ Add bonus</button>`}
+function bonusSheet(id){const b=D.bonuses.find(x=>x.id===id);if(!b)return;const c=cardById(b.cardId);const d=c?cardDef(c):{name:'Card'};const runs=bonusRuns(b);let cum=0;
+  let h=`<h3>🎯 ${esc(d.name)}${c&&c.last4?' ·· '+esc(c.last4):''}</h3><div class="small muted">${esc(b.offer||'Welcome bonus')}${b.startDate?' · started '+fmtDateY(b.startDate):''}${b.source?` · <a class="lnk" href="${esc(b.source)}" target="_blank" rel="noopener">offer</a>`:''}</div>`;
+  h+=(b.milestones||[]).map((m,i)=>{const st=msState(b,m);let body='';
+    if(m.type==='spend'&&st.sp!=null){const pct=Math.min(100,st.sp/(m.spend||1)*100);body=`<div class="bar ${st.s==='behind'?'warn':''}"><i style="width:${pct}%"></i></div><div class="small muted">${moneyR(st.sp)} of ${moneyR(m.spend)} counted${m.byDate?' up to '+fmtDate(m.byDate):''}</div>`}
+    if(m.type==='monthly')body=`<div class="list" style="margin-top:6px">${st.w.map(x=>`<div class="item" style="padding:5px 2px"><div class="grow small">Month ${x.i+1} · ${fmtDate(x.from)}–${fmtDate(addMonths(x.to,0))}</div><div class="small" style="font-variant-numeric:tabular-nums">${moneyR(x.amt)}</div><label class="tiny" style="display:flex;gap:4px;align-items:center;margin:0 0 0 10px"><input type="checkbox" data-mm="${i}:${x.i}" style="width:auto" ${x.met?'checked':''}> met</label></div>`).join('')}</div>`;
+    return `<div class="card"><div class="row"><div class="grow"><b>${i+1}. ${esc(msLabel(m))}</b></div><div class="small">${msReward(m)}</div></div>${body}<div class="small" style="margin-top:4px;color:${st.s==='behind'||st.s==='late'?'var(--bad)':st.s==='met'||st.s==='reached'?'var(--accent)':'var(--muted)'}">${esc(st.txt)}</div>
+      <div class="btns" style="margin-top:8px">${m.status==='met'?(m.posted?'':`<button class="sm" data-ms="posted" data-i="${i}">Points posted</button>`)+`<button class="sm" data-ms="reopen" data-i="${i}">Undo</button>`:m.status==='missed'?`<button class="sm" data-ms="reopen" data-i="${i}">Undo</button>`:`<button class="sm" data-ms="met" data-i="${i}">✓ Mark met</button><button class="sm" data-ms="missed" data-i="${i}">Missed</button>`}</div></div>`}).join('');
+  h+=`<h2>Spend counted from pay runs</h2><div class="card">${runs.length?`<div class="list">${runs.map(x=>{if(!x.skipped)cum+=x.amount;return `<div class="item" style="padding:6px 2px"><div class="grow small">${fmtDateY(x.date)}${x.draft?' · <span style="color:var(--warn)">run in progress</span>':''}${x.skipped?' · <span class="muted">not counted (first run)</span>':''}</div><div class="small" style="font-variant-numeric:tabular-nums;width:90px;text-align:right">${money(x.amount)}</div><div class="tiny muted" style="width:80px;text-align:right">${x.skipped?'':moneyR(cum)}</div></div>`}).join('')}</div>`:'<div class="small muted">No pay runs since the start date yet.</div>'}
+    ${(b.adjustments||[]).length?`<div style="font-weight:600;margin:10px 0 4px">Adjustments</div><div class="list">${b.adjustments.map(a=>`<div class="item" style="padding:6px 2px"><div class="grow small">${fmtDateY(a.date)} · ${esc(a.note||'')}</div><div class="small" style="font-variant-numeric:tabular-nums">${money(a.amount)}</div><button class="sm" data-adj-del="${a.id}">✕</button></div>`).join('')}</div>`:''}
+    <div class="tot"><span class="muted">Total counted</span><b>${money(bonusSpend(b))}</b></div><div class="tiny muted">Each pay-run balance is what you spent since the previous payment. The first run after the start can include spend from before it${b.countFirstRun===false?' (excluded for this bonus)':''}; refunds lower it. Use adjustments for spend you haven’t run yet or to correct the count.</div>
+    <div class="btns" style="margin-top:8px"><button class="sm" id="b-adj">+ Adjustment</button></div></div>`;
+  h+=`<div class="btns" style="margin-top:12px"><button id="b-edit">Edit bonus</button>${b.status==='active'?'<button id="b-done">Mark complete</button><button class="danger" id="b-cancel">Cancel bonus</button>':'<button id="b-react">Reactivate</button>'}<button class="primary" data-close style="flex:1">Close</button></div>`;
+  sheet(h,el=>{
+    const save=why=>{upsert('bonuses.json',b,`${d.name}: ${why}`);render();bonusSheet(b.id)};
+    el.querySelectorAll('[data-ms]').forEach(x=>x.onclick=()=>{const m=b.milestones[Number(x.dataset.i)];const a=x.dataset.ms;
+      if(a==='met'){m.status='met';m.metDate=todayISO();addEvent({cardId:b.cardId,type:'bonus_spend_met',note:`${msLabel(m)}${m.reward?' → '+Number(m.reward).toLocaleString('en-CA')+' '+(m.unit||'pts'):''}`});if(!nextMilestone(b))b.status='complete'}
+      else if(a==='missed')m.status='missed';else if(a==='posted'){m.posted=true;m.postedDate=todayISO()}else{m.status='open';m.metDate=null;m.posted=false;if(b.status==='complete')b.status='active'}
+      save(`bonus milestone ${a}`)});
+    el.querySelectorAll('[data-mm]').forEach(x=>x.onchange=()=>{const[i,k]=x.dataset.mm.split(':').map(Number);const m=b.milestones[i];m.monthsMet=Object.assign({},m.monthsMet||{});if(x.checked)m.monthsMet[k]=true;else delete m.monthsMet[k];save('bonus month '+(k+1)+(x.checked?' met':' unmet'))});
+    el.querySelectorAll('[data-adj-del]').forEach(x=>x.onclick=()=>{b.adjustments=(b.adjustments||[]).filter(a=>a.id!==x.dataset.adjDel);save('remove bonus adjustment')});
+    el.querySelector('#b-adj').onclick=()=>sheet(`<h3>Spend adjustment</h3><p class="small muted">Positive adds spend (e.g. charges since your last pay run); negative removes it (e.g. a refund, or spend from before the bonus started).</p><div class="grid2"><div><label>Amount ($)</label><input id="x-a" type="text" inputmode="decimal" placeholder="e.g. 350 or -120"></div><div><label>Date</label><input id="x-d" type="date" value="${todayISO()}"></div></div><label>Note</label><input id="x-n" placeholder="e.g. spend since Nov 25 run"><div class="btns" style="margin-top:14px"><button class="primary" id="x-ok" style="flex:1">Add</button><button id="x-back">Back</button></div>`,e2=>{
+      e2.querySelector('#x-back').onclick=()=>bonusSheet(b.id);e2.querySelector('#x-ok').onclick=()=>{const v=Number(String(e2.querySelector('#x-a').value).replace(/[$,\s]/g,''));if(!v){toast('Enter an amount');return}b.adjustments=[...(b.adjustments||[]),{id:uid('adj'),date:e2.querySelector('#x-d').value||todayISO(),amount:r2(v),note:e2.querySelector('#x-n').value.trim()}];save('bonus adjustment')}});
+    el.querySelector('#b-edit').onclick=()=>bonusEditor(clone(b),false);
+    const dn=el.querySelector('#b-done');if(dn)dn.onclick=()=>{b.status='complete';save('bonus complete')};
+    const cn=el.querySelector('#b-cancel');if(cn)cn.onclick=()=>confirmSheet('Cancel tracking this bonus? Its history stays in the data file.','Cancel bonus',()=>{b.status='cancelled';upsert('bonuses.json',b,`${d.name}: bonus cancelled`);render()});
+    const ra=el.querySelector('#b-react');if(ra)ra.onclick=()=>{b.status='active';save('bonus reactivated')}},true)}
+function bonusEditor(b,isNew){const c=cardById(b.cardId);let unit0=c?(PROGRAMS[cardDef(c).program]||{name:'pts'}).name:'pts';
+  b.milestones=b.milestones&&b.milestones.length?b.milestones:[{id:uid('ms'),type:'spend',spend:null,byDate:addMonths(b.startDate||todayISO(),3),reward:null,unit:unit0,status:'open'}];
+  const msRow=(m,i)=>`<div class="card" data-row="${i}" style="padding:10px"><div class="row"><select data-f="type" style="flex:1">${[['spend','Spend $ by a date'],['monthly','Spend $ every month'],['date','Date / anniversary bonus']].map(([k,v])=>`<option value="${k}" ${m.type===k?'selected':''}>${v}</option>`).join('')}</select><button class="sm danger" data-del="${i}">✕</button></div>
+    ${m.type==='spend'?`<div class="grid2"><div><label>Total spend since start ($)</label><input data-f="spend" type="text" inputmode="decimal" value="${m.spend??''}" placeholder="e.g. 1500"></div><div><label>Spend by</label><input data-f="byDate" type="date" value="${esc(m.byDate||'')}"></div></div><div class="btns" style="margin-top:6px">${[3,4,6,12].map(n=>`<button class="sm" data-plus="${n}">${n} mo</button>`).join('')}</div>`:
+      m.type==='monthly'?`<div class="grid2"><div><label>Per month ($)</label><input data-f="perMonth" type="text" inputmode="decimal" value="${m.perMonth??''}"></div><div><label>Number of months</label><input data-f="months" type="number" inputmode="numeric" value="${m.months??12}"></div></div>`:
+      `<div class="grid2"><div><label>What triggers it</label><input data-f="label" value="${esc(m.label||'')}" placeholder="e.g. 13th month anniversary"></div><div><label>Date</label><input data-f="byDate" type="date" value="${esc(m.byDate||'')}"></div></div>`}
+    <div class="grid2"><div><label>Reward</label><input data-f="reward" type="text" inputmode="numeric" value="${m.reward??''}" placeholder="e.g. 30000"></div><div><label>Unit</label><input data-f="unit" value="${esc(m.unit||unit0)}"></div></div></div>`;
+  const draw=()=>`<h3>${isNew?'Add':'Edit'} welcome bonus</h3><label>Card</label><select id="b-card">${D.cards.map(w=>`<option value="${w.id}" ${b.cardId===w.id?'selected':''}>${esc(cardLabel(w))}${w.status==='closed'?' (closed)':''}</option>`).join('')}</select>
+    <div class="grid2"><div><label>Start date (approved / opened)</label><input id="b-start" type="date" value="${esc(b.startDate||'')}"></div><div><label>Offer (short)</label><input id="b-offer" value="${esc(b.offer||'')}" placeholder="e.g. Up to 80,000 pts"></div></div>
+    <label>Offer link (optional)</label><input id="b-src" value="${esc(b.source||'')}" placeholder="https://…">
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px"><input type="checkbox" id="b-first" style="width:auto" ${b.countFirstRun!==false?'checked':''}> Count the first pay run after the start date in full</label>
+    <h2>Milestones</h2><div id="b-ms">${b.milestones.map(msRow).join('')}</div><button class="sm" id="b-add">+ Milestone</button>
+    <label>Notes</label><textarea id="b-notes" style="min-height:50px;font-family:inherit;font-size:14px">${esc(b.notes||'')}</textarea>
+    <div class="btns" style="margin-top:14px"><button class="primary" id="b-save" style="flex:1">Save bonus</button><button data-close>Cancel</button></div>`;
+  const readBack=el=>{b.cardId=el.querySelector('#b-card').value;b.startDate=el.querySelector('#b-start').value||null;b.offer=el.querySelector('#b-offer').value.trim();b.source=el.querySelector('#b-src').value.trim();b.countFirstRun=el.querySelector('#b-first').checked;b.notes=el.querySelector('#b-notes').value.trim();
+    el.querySelectorAll('[data-row]').forEach(r=>{const m=b.milestones[Number(r.dataset.row)];r.querySelectorAll('[data-f]').forEach(f=>{const k=f.dataset.f;let v=f.value.trim();if(['spend','perMonth','reward','months'].includes(k))v=v===''?null:Number(v.replace(/[$,\s]/g,''));else if(v==='')v=null;m[k]=v})})};
+  const open=()=>sheet(draw(),el=>{
+    el.querySelector('#b-add').onclick=()=>{readBack(el);b.milestones.push({id:uid('ms'),type:'spend',spend:null,byDate:addMonths(b.startDate||todayISO(),12),reward:null,unit:unit0,status:'open'});open()};
+    el.querySelectorAll('[data-del]').forEach(x=>x.onclick=()=>{readBack(el);b.milestones.splice(Number(x.dataset.del),1);open()});
+    el.querySelectorAll('select[data-f="type"]').forEach(x=>x.onchange=()=>{readBack(el);open()});
+    el.querySelectorAll('[data-plus]').forEach(x=>x.onclick=()=>{const row=x.closest('[data-row]');const inp=row.querySelector('[data-f="byDate"]');const st=el.querySelector('#b-start').value||todayISO();inp.value=addMonths(st,Number(x.dataset.plus))});
+    el.querySelector('#b-card').onchange=()=>{readBack(el);const nc=cardById(b.cardId);const nu=nc?(PROGRAMS[cardDef(nc).program]||{name:'pts'}).name:'pts';b.milestones.forEach(m=>{if(!m.unit||m.unit===unit0)m.unit=nu});bonusEditor(b,isNew)};
+    el.querySelector('#b-save').onclick=()=>{readBack(el);if(!b.startDate){toast('Add the start date');return}const bad=b.milestones.find(m=>m.type==='spend'&&!(m.spend>0));if(bad){toast('Each spend milestone needs an amount');return}
+      const isFirst=isNew;upsert('bonuses.json',b,`${cardName(b.cardId)}: ${isNew?'add':'edit'} welcome bonus`);
+      if(isFirst)addEvent({cardId:b.cardId,type:'bonus_spend_started',date:b.startDate,target:(b.milestones.find(m=>m.type==='spend')||{}).spend||null,deadline:(b.milestones.find(m=>m.type==='spend')||{}).byDate||null,note:b.offer||''});
+      closeSheet();render();bonusSheet(b.id)}},true);
+  open()}
+function newBonus(cardId){const c=cardById(cardId)||activeCards()[0];bonusEditor({id:uid('bonus'),cardId:c.id,startDate:c.openedDate||todayISO(),offer:'',source:'',countFirstRun:true,status:'active',milestones:[],adjustments:[],notes:''},true)}
+
 /* ================= Pay ================= */
 let payMode='run',reorder=false;
 const draftRun=()=>D.runs.find(r=>r.status==='draft');
@@ -442,7 +538,7 @@ function vPay(){
       <div class="o">${reorder?`<div class="ord"><button data-act="mv" data-id="${c.id}" data-d="-1" tabindex="-1">▲</button><button data-act="mv" data-id="${c.id}" data-d="1" tabindex="-1">▼</button></div>`:(c.payeeOrder||'')}</div>
       <div class="f">${miniCard(d)}</div>
       <div class="n"><div class="ellipsis" style="cursor:pointer" data-act="opencard" data-id="${c.id}">${esc(d.name)}</div><div class="tiny muted">${c.last4?'·· '+esc(c.last4):''}${c.dormant?' · dormant':''}${c.status==='closed'?' · closed — final balance':''}${c.autopayMinimum?' · autopay min':''}</div></div>
-      <div class="d">${b.flag?`<span class="chip bad" style="cursor:pointer" data-act="flag" data-id="${c.id}">🚩 ${esc(b.flagNote)}</span>`:dueChip(c,run)}</div>
+      <div class="d">${b.flag?`<span class="chip bad" style="cursor:pointer" data-act="flag" data-id="${c.id}">🚩 ${esc(b.flagNote)}</span>`:dueChip(c,run)} ${bonusChip(c.id)}</div>
       <div class="b"><input type="text" inputmode="decimal" autocomplete="off" class="${b.balance==null?'missing':''}" data-bal="${c.id}" data-keep="bal-${c.id}" value="${b.balance!=null?b.balance.toFixed(2):''}" placeholder="${c.currency==='USD'?'US$':'$'} balance" aria-label="Balance for ${esc(d.name)}"></div>
       <div class="a">${zero?'<span class="chip ok">nothing to pay</span>':`<button class="pbtn ${b.paid?'on':''}" data-act="paid" data-id="${c.id}" tabindex="-1" ${b.balance==null?'disabled':''}>${b.paid?'✓ Paid':'Paid'}</button>`}<button class="pbtn ${b.flag?'flagon':''}" data-act="flag" data-id="${c.id}" tabindex="-1">🚩</button></div></div>`};
   const cad=cards.filter(c=>c.currency!=='USD'),usd=cards.filter(c=>c.currency==='USD');
@@ -572,6 +668,8 @@ $('#app').addEventListener('click',e=>{const t=e.target.closest('[data-act]');if
     case 'shopmode':shopMode();break;
     case 'wtab':walletTab=t.dataset.t;render();break;
     case 'opencard':cardDetail(id);break;
+    case 'bonus':bonusSheet(id);break;
+    case 'newbonus':newBonus(null);break;
     case 'addcard':addCard();break;
     case 'pmode':payMode=t.dataset.m;render();break;
     case 'startrun':startRun();break;
